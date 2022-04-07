@@ -193,7 +193,11 @@ public class JarCache {
       if (removeMissingFiles) {
         removed =
             cachedFiles.entrySet().stream()
-                .filter(e -> !projectState.containsKey(e.getKey()))
+                .filter(
+                    e ->
+                        !projectState.containsKey(e.getKey())
+                            && !projectState.containsKey(
+                                JarRepackager.getOriginalJarName(e.getKey())))
                 .map(Map.Entry::getValue)
                 .collect(toImmutableList());
       }
@@ -210,7 +214,10 @@ public class JarCache {
           .run();
 
       // update cache files, and remove files if required
-      List<ListenableFuture<?>> futures = new ArrayList<>(copyLocally(updated));
+      List<ListenableFuture<?>> futures =
+          new ArrayList<>(
+              copyAndRepackageLocally(
+                  updated, JavaLintCollector.collectLintJarsArtifacts(projectData)));
       if (removeMissingFiles) {
         futures.addAll(deleteCacheFiles(removed));
       }
@@ -278,21 +285,34 @@ public class JarCache {
     return ImmutableMap.copyOf(newOutputs);
   }
 
-  private Collection<ListenableFuture<?>> copyLocally(Map<String, BlazeArtifact> updated) {
+  private List<ListenableFuture<?>> copyAndRepackageLocally(
+      Map<String, BlazeArtifact> updated, List<BlazeArtifact> lintJars) {
     List<ListenableFuture<?>> futures = new ArrayList<>();
     updated.forEach(
         (key, artifact) ->
             futures.add(
                 FetchExecutor.EXECUTOR.submit(
                     () -> {
+                      File destnation = jarCacheFolderProvider.getCacheFileByKey(key);
                       try {
-                        copyLocally(artifact, jarCacheFolderProvider.getCacheFileByKey(key));
+                        copyLocally(artifact, destnation);
                       } catch (IOException e) {
                         logger.warn(
                             String.format(
                                 "Fail to copy artifact %s to %s",
                                 artifact, jarCacheFolderProvider.getJarCacheFolder().getPath()),
                             e);
+                      }
+                      if (lintJars.contains(artifact)) {
+                        try {
+                          JarRepackager.processJar(destnation);
+                        } catch (IOException | InterruptedException e) {
+                          logger.warn(
+                              String.format(
+                                  "Fail to repackage artifact %s to %s",
+                                  artifact, jarCacheFolderProvider.getJarCacheFolder().getPath()),
+                              e);
+                        }
                       }
                     })));
     return futures;
@@ -371,6 +391,18 @@ public class JarCache {
     }
     String cacheKey = cacheKeyForJar(artifact);
     return getCacheFile(cacheKey).orElseGet(() -> getFallbackFile(artifact));
+  }
+
+  /**
+   * Gets the cached file for a lint jar. Return the repackaged one if exists. Otherwise, return the
+   * original jar.
+   */
+  @Nullable
+  public File getCachedLintJar(BlazeArtifact artifact) {
+    File jar = getCachedJar(artifact);
+    File repackagedJar =
+        new File(jar.getParent(), JarRepackager.getRepackagedJarName(jar.getName()));
+    return repackaged.exists() ? repackagedJar : jar;
   }
 
   /**
