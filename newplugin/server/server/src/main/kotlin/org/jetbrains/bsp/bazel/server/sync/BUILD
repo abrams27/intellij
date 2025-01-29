@@ -1,0 +1,36 @@
+load("@rules_kotlin//kotlin:jvm.bzl", "kt_jvm_library")
+
+kt_jvm_library(
+    name = "sync",
+    srcs = glob([
+        "*.java",
+        "*.kt",
+    ]),
+    visibility = ["//visibility:public"],
+    deps = [
+        "//newplugin/protocol",
+        "//newplugin/server/bazelrunner",
+        "//newplugin/server/bazelrunner/src/main/kotlin/org/jetbrains/bsp/bazel/bazelrunner/utils",
+        "//newplugin/server/commons",
+        "//newplugin/server/executioncontext/workspacecontext",
+        "//newplugin/server/logger",
+        "//newplugin/server/server/src/main/kotlin/org/jetbrains/bsp/bazel/server/benchmark",
+        "//newplugin/server/server/src/main/kotlin/org/jetbrains/bsp/bazel/server/bep",
+        "//newplugin/server/server/src/main/kotlin/org/jetbrains/bsp/bazel/server/bsp/info",
+        "//newplugin/server/server/src/main/kotlin/org/jetbrains/bsp/bazel/server/bsp/managers",
+        "//newplugin/server/server/src/main/kotlin/org/jetbrains/bsp/bazel/server/bsp/utils",
+        "//newplugin/server/server/src/main/kotlin/org/jetbrains/bsp/bazel/server/dependencygraph",
+        "//newplugin/server/server/src/main/kotlin/org/jetbrains/bsp/bazel/server/label",
+        "//newplugin/server/server/src/main/kotlin/org/jetbrains/bsp/bazel/server/paths",
+        "//newplugin/server/server/src/main/kotlin/org/jetbrains/bsp/bazel/server/sync/firstPhase",
+        "//newplugin/server/server/src/main/kotlin/org/jetbrains/bsp/bazel/server/sync/languages",
+        "//newplugin/server/server/src/main/kotlin/org/jetbrains/bsp/bazel/server/sync/proto:bsp_target_info_java_proto",
+        "//newplugin/server/server/src/main/kotlin/org/jetbrains/bsp/bazel/server/sync/sharding",
+        "@bazel_bep//jar",
+        "@maven//:ch_epfl_scala_bsp4j",
+        "@maven//:com_google_protobuf_protobuf_java",
+        "@maven//:io_grpc_grpc_stub",
+        "@maven//:org_eclipse_lsp4j_org_eclipse_lsp4j_jsonrpc",
+        "@maven//:org_jetbrains_kotlinx_kotlinx_coroutines_core",
+    ],
+)

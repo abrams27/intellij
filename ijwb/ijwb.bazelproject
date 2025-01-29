@@ -14,7 +14,7 @@ targets:
 workspace_type: intellij_plugin
 
 build_flags:
-  --define=ij_product=intellij-ue-oss-under-dev
+  --define=ij_product=intellij-oss-latest-stable
 
 test_sources:
   */tests/unittests*
@@ -24,3 +24,7 @@ additional_languages:
   kotlin
 
 use_query_sync: true
+
+enabled_rules:
+    rules_java
+    rules_kotlin

@@ -27,6 +27,7 @@ kt_jvm_library(
     resource_strip_prefix = "base/src",
     visibility = PLUGIN_PACKAGES_VISIBILITY,
     deps = [
+        "//newplugin/plugin-bsp/src/main/kotlin/org/jetbrains/plugins/bsp/magicmetamodel/impl/workspacemodel/impl",
         "//aspect:aspect_lib",
         "//aspect:aspect_template_lib",
         "//aspect:aspect_qsync_lib",

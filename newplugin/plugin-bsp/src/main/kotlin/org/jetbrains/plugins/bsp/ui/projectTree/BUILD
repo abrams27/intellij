@@ -1,0 +1,17 @@
+load("@rules_kotlin//kotlin:jvm.bzl", "kt_jvm_library")
+
+kt_jvm_library(
+    name = "projectTree",
+    srcs = glob([
+        "*.kt",
+        "**/*.kt",
+    ]),
+    visibility = ["//newplugin/plugin-bsp:__subpackages__"],
+    deps = [
+        "//newplugin/plugin-bsp/src/main/kotlin/org/jetbrains/plugins/bsp/action",
+        "//newplugin/plugin-bsp/src/main/kotlin/org/jetbrains/plugins/bsp/config",
+        "//newplugin/plugin-bsp/src/main/kotlin/org/jetbrains/plugins/bsp/runnerAction",
+        "//newplugin/plugin-bsp/src/main/kotlin/org/jetbrains/plugins/bsp/target",
+        "//intellij_platform_sdk:plugin_api",
+    ],
+)

@@ -99,6 +99,9 @@ maven.install(
         "com.google.j2objc:j2objc-annotations:2.8",
         "com.google.guava:failureaccess:1.0.2",
         "org.hamcrest:hamcrest-core:3.0",
+        "ch.epfl.scala:bsp4j:2.2.0-M2",
+                "org.apache.logging.log4j:log4j-api:2.24.3",
+                "org.apache.logging.log4j:log4j-core:2.24.3",
     ],
     fail_if_repin_required = True,
     generate_compat_repositories = True,
@@ -133,6 +136,14 @@ use_repo(
 
 bazel_dep(name = "rules_go", version = "0.51.0", repo_name = "io_bazel_rules_go")
 bazel_dep(name = "gazelle", version = "0.40.0", repo_name = "bazel_gazelle")
+
+BAZEL_BEP_VERSION = "5.4.1"
+http_jar = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_jar")
+http_jar(
+    name = "bazel_bep",
+    integrity = "sha256-z7XAsDOW3Ha8zrcg1ZP/8+7Azg4MNzUFQAtUBvjl75U=",
+    url = "https://github.com/agluszak/bazel-bep-proto/releases/download/%s/bazel-bep-protobuf.jar" % BAZEL_BEP_VERSION,
+)
 
 go_repository = use_repo_rule("@bazel_gazelle//:deps.bzl", "go_repository")
 

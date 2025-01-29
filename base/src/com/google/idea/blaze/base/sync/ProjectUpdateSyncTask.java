@@ -63,6 +63,7 @@ import com.google.idea.blaze.base.sync.workspace.ArtifactLocationDecoderImpl;
 import com.google.idea.blaze.base.util.SaveUtil;
 import com.google.idea.common.util.Transactions;
 import com.intellij.openapi.application.ApplicationManager;
+import com.intellij.openapi.application.WriteAction;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.module.Module;
 import com.intellij.openapi.module.ModuleType;
@@ -76,7 +77,24 @@ import com.intellij.openapi.util.io.FileUtil;
 import com.intellij.openapi.vfs.VfsUtil;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.openapi.vfs.VirtualFileManager;
+import com.intellij.platform.backend.workspace.BuilderSnapshot;
+import com.intellij.platform.backend.workspace.StorageReplacement;
+import com.intellij.platform.backend.workspace.WorkspaceModel;
+import com.intellij.platform.backend.workspace.impl.WorkspaceModelInternal;
+import com.intellij.platform.workspace.jps.JpsFileDependentEntitySource;
+import com.intellij.platform.workspace.jps.JpsFileEntitySource;
+import com.intellij.platform.workspace.jps.JpsGlobalFileEntitySource;
+import com.intellij.platform.workspace.storage.EntitySource;
+import com.intellij.platform.workspace.storage.MutableEntityStorage;
+import com.intellij.platform.workspace.storage.url.VirtualFileUrlManager;
+import kotlinx.coroutines.GlobalScope;
+import org.jetbrains.plugins.bsp.magicmetamodel.impl.workspacemodel.impl.WorkspaceModelUpdaterImpl;
+import org.jetbrains.plugins.bsp.workspacemodel.entities.BspEntitySource;
+
 import java.io.File;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import javax.annotation.Nullable;
@@ -86,44 +104,48 @@ final class ProjectUpdateSyncTask {
 
   private static final Logger logger = Logger.getInstance(ProjectUpdateSyncTask.class);
 
-  /** Updates the project target map and related data, given the blaze build output. */
+  /**
+   * Updates the project target map and related data, given the blaze build output.
+   */
   @Nullable
   static ProjectTargetData updateTargetData(
-      Project project,
-      BlazeSyncParams syncParams,
-      SyncProjectState projectState,
-      BlazeSyncBuildResult buildResult,
-      BlazeContext parentContext) {
+          Project project,
+          BlazeSyncParams syncParams,
+          SyncProjectState projectState,
+          BlazeSyncBuildResult buildResult,
+          BlazeContext parentContext) {
     boolean mergeWithOldState = !syncParams.addProjectViewTargets();
     return Scope.push(
-        parentContext,
-        context -> {
-          context.push(new TimingScope("ReadBuildOutputs", EventType.BlazeInvocation));
-          context.output(new StatusOutput("Parsing build outputs..."));
-          BlazeIdeInterface blazeIdeInterface = BlazeIdeInterface.getInstance();
-          return blazeIdeInterface.updateTargetData(
-              project,
-              context,
-              WorkspaceRoot.fromProject(project),
-              projectState,
-              buildResult,
-              mergeWithOldState,
-              getOldProjectData(project, syncParams.syncMode()));
-        });
+            parentContext,
+            context -> {
+              context.push(new TimingScope("ReadBuildOutputs", EventType.BlazeInvocation));
+              context.output(new StatusOutput("Parsing build outputs..."));
+              BlazeIdeInterface blazeIdeInterface = BlazeIdeInterface.getInstance();
+              return blazeIdeInterface.updateTargetData(
+                      project,
+                      context,
+                      WorkspaceRoot.fromProject(project),
+                      projectState,
+                      buildResult,
+                      mergeWithOldState,
+                      getOldProjectData(project, syncParams.syncMode()));
+            });
   }
 
-  /** Runs the project update phase of sync. */
+  /**
+   * Runs the project update phase of sync.
+   */
   static void runProjectUpdatePhase(
-      Project project,
-      SyncMode syncMode,
-      SyncProjectState projectState,
-      ProjectTargetData targetData,
-      BlazeInfo blazeInfo,
-      BlazeContext context)
-      throws SyncCanceledException, SyncFailedException {
+          Project project,
+          SyncMode syncMode,
+          SyncProjectState projectState,
+          ProjectTargetData targetData,
+          BlazeInfo blazeInfo,
+          BlazeContext context)
+          throws SyncCanceledException, SyncFailedException {
     SaveUtil.saveAllFiles();
     ProjectUpdateSyncTask task =
-        new ProjectUpdateSyncTask(project, syncMode, projectState, targetData, blazeInfo);
+            new ProjectUpdateSyncTask(project, syncMode, projectState, targetData, blazeInfo);
     task.run(context);
   }
 
@@ -134,14 +156,15 @@ final class ProjectUpdateSyncTask {
   private final SyncProjectState projectState;
   private final ProjectTargetData targetData;
   private final BlazeInfo blazeInfo;
-  @Nullable private final BlazeProjectData oldProjectData;
+  @Nullable
+  private final BlazeProjectData oldProjectData;
 
   private ProjectUpdateSyncTask(
-      Project project,
-      SyncMode syncMode,
-      SyncProjectState projectState,
-      ProjectTargetData targetData,
-      BlazeInfo blazeInfo) {
+          Project project,
+          SyncMode syncMode,
+          SyncProjectState projectState,
+          ProjectTargetData targetData,
+          BlazeInfo blazeInfo) {
     this.project = project;
     this.importSettings = BlazeImportSettingsManager.getInstance(project).getImportSettings();
     this.workspaceRoot = WorkspaceRoot.fromImportSettings(importSettings);
@@ -158,8 +181,8 @@ final class ProjectUpdateSyncTask {
       return null;
     }
     Preconditions.checkState(
-        Blaze.getProjectType(project) == ProjectType.ASPECT_SYNC,
-        "This should only happen in legacy sync");
+            Blaze.getProjectType(project) == ProjectType.ASPECT_SYNC,
+            "This should only happen in legacy sync");
     BlazeProjectData data = BlazeProjectDataManager.getInstance(project).getBlazeProjectData();
     if (data == null) {
       return null;
@@ -174,44 +197,44 @@ final class ProjectUpdateSyncTask {
     RemoteOutputArtifacts newRemoteState = targetData.remoteOutputs;
 
     ArtifactLocationDecoder artifactLocationDecoder =
-        new ArtifactLocationDecoderImpl(
-            blazeInfo, projectState.getWorkspacePathResolver(), newRemoteState);
+            new ArtifactLocationDecoderImpl(
+                    blazeInfo, projectState.getWorkspacePathResolver(), newRemoteState);
 
     Scope.push(
-        context,
-        childContext -> {
-          childContext.push(new TimingScope("UpdateRemoteOutputsCache", EventType.Prefetching));
-          RemoteOutputsCache.getInstance(project)
-              .updateCache(
-                  context,
-                  targetMap,
-                  projectState.getLanguageSettings(),
-                  newRemoteState,
-                  oldRemoteState,
-                  /* clearCache= */ syncMode == SyncMode.FULL);
-        });
+            context,
+            childContext -> {
+              childContext.push(new TimingScope("UpdateRemoteOutputsCache", EventType.Prefetching));
+              RemoteOutputsCache.getInstance(project)
+                      .updateCache(
+                              context,
+                              targetMap,
+                              projectState.getLanguageSettings(),
+                              newRemoteState,
+                              oldRemoteState,
+                              /* clearCache= */ syncMode == SyncMode.FULL);
+            });
 
     SyncState.Builder syncStateBuilder = new SyncState.Builder();
     Scope.push(
-        context,
-        childContext -> {
-          childContext.push(new TimingScope("UpdateSyncState", EventType.Other));
-          for (BlazeSyncPlugin syncPlugin : BlazeSyncPlugin.EP_NAME.getExtensions()) {
-            syncPlugin.updateSyncState(
-                project,
-                childContext,
-                workspaceRoot,
-                projectState.getProjectViewSet(),
-                projectState.getLanguageSettings(),
-                projectState.getBlazeVersionData(),
-                projectState.getWorkingSet(),
-                artifactLocationDecoder,
-                targetMap,
-                syncStateBuilder,
-                oldProjectData != null ? oldProjectData.getSyncState() : null,
-                syncMode);
-          }
-        });
+            context,
+            childContext -> {
+              childContext.push(new TimingScope("UpdateSyncState", EventType.Other));
+              for (BlazeSyncPlugin syncPlugin : BlazeSyncPlugin.EP_NAME.getExtensions()) {
+                syncPlugin.updateSyncState(
+                        project,
+                        childContext,
+                        workspaceRoot,
+                        projectState.getProjectViewSet(),
+                        projectState.getLanguageSettings(),
+                        projectState.getBlazeVersionData(),
+                        projectState.getWorkingSet(),
+                        artifactLocationDecoder,
+                        targetMap,
+                        syncStateBuilder,
+                        oldProjectData != null ? oldProjectData.getSyncState() : null,
+                        syncMode);
+              }
+            });
     if (context.isCancelled()) {
       throw new SyncCanceledException();
     }
@@ -220,32 +243,32 @@ final class ProjectUpdateSyncTask {
     }
 
     BlazeProjectData newProjectData =
-        new AspectSyncProjectData(
-            targetData,
-            blazeInfo,
-            projectState.getBlazeVersionData(),
-            projectState.getWorkspacePathResolver(),
-            artifactLocationDecoder,
-            projectState.getLanguageSettings(),
-            projectState.getExternalWorkspaceData(),
-            syncStateBuilder.build());
+            new AspectSyncProjectData(
+                    targetData,
+                    blazeInfo,
+                    projectState.getBlazeVersionData(),
+                    projectState.getWorkspacePathResolver(),
+                    artifactLocationDecoder,
+                    projectState.getLanguageSettings(),
+                    projectState.getExternalWorkspaceData(),
+                    syncStateBuilder.build());
 
     FileCaches.onSync(
-        project,
-        context,
-        projectState.getProjectViewSet(),
-        newProjectData,
-        oldProjectData,
-        syncMode);
+            project,
+            context,
+            projectState.getProjectViewSet(),
+            newProjectData,
+            oldProjectData,
+            syncMode);
     ListenableFuture<PrefetchStats> prefetch =
-        PrefetchService.getInstance()
-            .prefetchProjectFiles(project, projectState.getProjectViewSet(), newProjectData);
+            PrefetchService.getInstance()
+                    .prefetchProjectFiles(project, projectState.getProjectViewSet(), newProjectData);
     FutureResult<PrefetchStats> result =
-        FutureUtil.waitForFuture(context, prefetch)
-            .withProgressMessage("Prefetching files...")
-            .timed("PrefetchFiles", EventType.Prefetching)
-            .onError("Prefetch failed")
-            .run();
+            FutureUtil.waitForFuture(context, prefetch)
+                    .withProgressMessage("Prefetching files...")
+                    .timed("PrefetchFiles", EventType.Prefetching)
+                    .onError("Prefetch failed")
+                    .run();
     if (result.success()) {
       long prefetched = result.result().bytesPrefetched();
       if (prefetched > 0) {
@@ -254,55 +277,55 @@ final class ProjectUpdateSyncTask {
     }
 
     ListenableFuture<DirectoryStructure> directoryStructureFuture =
-        DirectoryStructure.getRootDirectoryStructure(
-            project, workspaceRoot, projectState.getProjectViewSet());
+            DirectoryStructure.getRootDirectoryStructure(
+                    project, workspaceRoot, projectState.getProjectViewSet());
 
     refreshVirtualFileSystem(context, project, newProjectData);
 
     DirectoryStructure directoryStructure =
-        FutureUtil.waitForFuture(context, directoryStructureFuture)
-            .withProgressMessage("Computing directory structure...")
-            .timed("DirectoryStructure", EventType.Other)
-            .onError("Directory structure computation failed")
-            .run()
-            .result();
+            FutureUtil.waitForFuture(context, directoryStructureFuture)
+                    .withProgressMessage("Computing directory structure...")
+                    .timed("DirectoryStructure", EventType.Other)
+                    .onError("Directory structure computation failed")
+                    .run()
+                    .result();
     if (directoryStructure == null) {
       throw new SyncFailedException();
     }
 
     boolean success =
-        updateProject(
-            context,
-            projectState.getProjectViewSet(),
-            projectState.getBlazeVersionData(),
-            directoryStructure,
-            oldProjectData,
-            newProjectData);
+            updateProject(
+                    context,
+                    projectState.getProjectViewSet(),
+                    projectState.getBlazeVersionData(),
+                    directoryStructure,
+                    oldProjectData,
+                    newProjectData);
     if (!success) {
       throw new SyncFailedException();
     }
   }
 
   private static void refreshVirtualFileSystem(
-      BlazeContext context, Project project, BlazeProjectData blazeProjectData) {
+          BlazeContext context, Project project, BlazeProjectData blazeProjectData) {
     Scope.push(
-        context,
-        (childContext) -> {
-          childContext.push(new TimingScope("RefreshVirtualFileSystem", EventType.Other));
-          childContext.output(new StatusOutput("Refreshing files..."));
-          if (ApplicationManager.getApplication().isReadAccessAllowed()) {
-            IssueOutput.warn("Attempted to refresh file system while holding read lock")
-                .submit(childContext);
-            logger.warn("Attempted to refresh file system while holding read lock");
-          } else if (Arrays.stream(BlazeSyncPlugin.EP_NAME.getExtensions())
-              .anyMatch(p -> p.refreshExecutionRoot(project, blazeProjectData))) {
-            // this refresh should happen off EDT and without read lock.
-            VirtualFile root =
-                VfsUtil.findFileByIoFile(blazeProjectData.getBlazeInfo().getExecutionRoot(), true);
-            VfsUtil.markDirtyAndRefresh(
-                /* async= */ false, /* recursive= */ true, /* reloadChildren= */ true, root);
-          }
-        });
+            context,
+            (childContext) -> {
+              childContext.push(new TimingScope("RefreshVirtualFileSystem", EventType.Other));
+              childContext.output(new StatusOutput("Refreshing files..."));
+              if (ApplicationManager.getApplication().isReadAccessAllowed()) {
+                IssueOutput.warn("Attempted to refresh file system while holding read lock")
+                        .submit(childContext);
+                logger.warn("Attempted to refresh file system while holding read lock");
+              } else if (Arrays.stream(BlazeSyncPlugin.EP_NAME.getExtensions())
+                      .anyMatch(p -> p.refreshExecutionRoot(project, blazeProjectData))) {
+                // this refresh should happen off EDT and without read lock.
+                VirtualFile root =
+                        VfsUtil.findFileByIoFile(blazeProjectData.getBlazeInfo().getExecutionRoot(), true);
+                VfsUtil.markDirtyAndRefresh(
+                        /* async= */ false, /* recursive= */ true, /* reloadChildren= */ true, root);
+              }
+            });
   }
 
   private void createSdks(BlazeProjectData blazeProjectData) {
@@ -312,72 +335,72 @@ final class ProjectUpdateSyncTask {
   }
 
   private boolean updateProject(
-      BlazeContext parentContext,
-      ProjectViewSet projectViewSet,
-      BlazeVersionData blazeVersionData,
-      DirectoryStructure directoryStructure,
-      @Nullable BlazeProjectData oldBlazeProjectData,
-      BlazeProjectData newBlazeProjectData) {
+          BlazeContext parentContext,
+          ProjectViewSet projectViewSet,
+          BlazeVersionData blazeVersionData,
+          DirectoryStructure directoryStructure,
+          @Nullable BlazeProjectData oldBlazeProjectData,
+          BlazeProjectData newBlazeProjectData) {
     return Scope.push(
-        parentContext,
-        context -> {
-          context.push(new TimingScope("UpdateProjectStructure", EventType.Other));
-          context.output(new StatusOutput("Initializing project SDKs..."));
-          ApplicationManager.getApplication().invokeAndWait(() -> createSdks(newBlazeProjectData));
-          context.output(new StatusOutput("Committing project structure..."));
+            parentContext,
+            context -> {
+              context.push(new TimingScope("UpdateProjectStructure", EventType.Other));
+              context.output(new StatusOutput("Initializing project SDKs..."));
+              ApplicationManager.getApplication().invokeAndWait(() -> createSdks(newBlazeProjectData));
+              context.output(new StatusOutput("Committing project structure..."));
 
-          try {
-            Transactions.submitWriteActionTransactionAndWait(
-                () ->
-                    ProjectRootManagerEx.getInstanceEx(this.project)
-                        .mergeRootsChangesDuring(
-                            () -> {
-                              updateProjectStructure(
-                                  context,
-                                  importSettings,
-                                  projectViewSet,
-                                  blazeVersionData,
-                                  directoryStructure,
-                                  newBlazeProjectData,
-                                  oldBlazeProjectData);
-                            }));
-          } catch (ProcessCanceledException e) {
-            context.setCancelled();
-            throw e;
-          } catch (Throwable e) {
-            IssueOutput.error("Internal error. Error: " + e).submit(context);
-            logger.error(e);
-            return false;
-          }
+              try {
+                Transactions.submitWriteActionTransactionAndWait(
+                        () ->
+                                ProjectRootManagerEx.getInstanceEx(this.project)
+                                        .mergeRootsChangesDuring(
+                                                () -> {
+                                                  updateProjectStructure(
+                                                          context,
+                                                          importSettings,
+                                                          projectViewSet,
+                                                          blazeVersionData,
+                                                          directoryStructure,
+                                                          newBlazeProjectData,
+                                                          oldBlazeProjectData);
+                                                }));
+              } catch (ProcessCanceledException e) {
+                context.setCancelled();
+                throw e;
+              } catch (Throwable e) {
+                IssueOutput.error("Internal error. Error: " + e).submit(context);
+                logger.error(e);
+                return false;
+              }
 
-          BlazeProjectDataManager.getInstance(project)
-              .saveProject(importSettings, newBlazeProjectData);
-          return true;
-        });
+              BlazeProjectDataManager.getInstance(project)
+                      .saveProject(importSettings, newBlazeProjectData);
+              return true;
+            });
   }
 
   private void updateProjectStructure(
-      BlazeContext context,
-      BlazeImportSettings importSettings,
-      ProjectViewSet projectViewSet,
-      BlazeVersionData blazeVersionData,
-      DirectoryStructure directoryStructure,
-      BlazeProjectData newBlazeProjectData,
-      @Nullable BlazeProjectData oldBlazeProjectData) {
+          BlazeContext context,
+          BlazeImportSettings importSettings,
+          ProjectViewSet projectViewSet,
+          BlazeVersionData blazeVersionData,
+          DirectoryStructure directoryStructure,
+          BlazeProjectData newBlazeProjectData,
+          @Nullable BlazeProjectData oldBlazeProjectData) {
 
     for (BlazeSyncPlugin syncPlugin : BlazeSyncPlugin.EP_NAME.getExtensions()) {
       syncPlugin.updateProjectSdk(
-          project, context, projectViewSet, blazeVersionData, newBlazeProjectData);
+              project, context, projectViewSet, blazeVersionData, newBlazeProjectData);
     }
 
     ModuleEditorImpl moduleEditor =
-        ModuleEditorProvider.getInstance().getModuleEditor(project, importSettings);
+            ModuleEditorProvider.getInstance().getModuleEditor(project, importSettings);
 
     ModuleType<?> workspaceModuleType = null;
     for (BlazeSyncPlugin syncPlugin : BlazeSyncPlugin.EP_NAME.getExtensions()) {
       workspaceModuleType =
-          syncPlugin.getWorkspaceModuleType(
-              newBlazeProjectData.getWorkspaceLanguageSettings().getWorkspaceType());
+              syncPlugin.getWorkspaceModuleType(
+                      newBlazeProjectData.getWorkspaceLanguageSettings().getWorkspaceType());
       if (workspaceModuleType != null) {
         break;
       }
@@ -387,40 +410,45 @@ final class ProjectUpdateSyncTask {
     }
 
     Module workspaceModule =
-        moduleEditor.createModule(BlazeDataStorage.WORKSPACE_MODULE_NAME, workspaceModuleType);
+            moduleEditor.createModule(BlazeDataStorage.WORKSPACE_MODULE_NAME, workspaceModuleType);
     ModifiableRootModel workspaceModifiableModel = moduleEditor.editModule(workspaceModule);
 
     ContentEntryEditor.createContentEntries(
-        project,
-        workspaceRoot,
-        projectViewSet,
-        newBlazeProjectData,
-        directoryStructure,
-        workspaceModifiableModel);
+            project,
+            workspaceRoot,
+            projectViewSet,
+            newBlazeProjectData,
+            directoryStructure,
+            workspaceModifiableModel);
 
     List<BlazeLibrary> libraries =
-        BlazeLibraryCollector.getLibraries(projectViewSet, newBlazeProjectData);
+            BlazeLibraryCollector.getLibraries(projectViewSet, newBlazeProjectData);
     LibraryEditor.updateProjectLibraries(
-        project, context, projectViewSet, newBlazeProjectData, libraries);
+            project, context, projectViewSet, newBlazeProjectData, libraries);
     LibraryEditor.configureDependencies(project, workspaceModifiableModel, libraries);
 
     for (BlazeSyncPlugin blazeSyncPlugin : BlazeSyncPlugin.EP_NAME.getExtensions()) {
       blazeSyncPlugin.updateProjectStructure(
-          project,
-          context,
-          workspaceRoot,
-          projectViewSet,
-          newBlazeProjectData,
-          oldBlazeProjectData,
-          moduleEditor,
-          workspaceModule,
-          workspaceModifiableModel);
+              project,
+              context,
+              workspaceRoot,
+              projectViewSet,
+              newBlazeProjectData,
+              oldBlazeProjectData,
+              moduleEditor,
+              workspaceModule,
+              workspaceModifiableModel);
     }
 
     createProjectDataDirectoryModule(
-        moduleEditor, new File(importSettings.getProjectDataDirectory()), workspaceModuleType);
+            moduleEditor, new File(importSettings.getProjectDataDirectory()), workspaceModuleType);
 
-    moduleEditor.commitWithGc(context);
+//    ----------------------------
+    new XD().xd(project, Path.of(importSettings.getWorkspaceRoot()), newBlazeProjectData);
+//    ----------------------------
+
+
+//    moduleEditor.commitWithGc(context);
   }
 
   /**
